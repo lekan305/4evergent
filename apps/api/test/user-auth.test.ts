@@ -366,6 +366,36 @@ test("stellar: signature from a DIFFERENT key is rejected; public key alone is n
   }
 });
 
+test("stellar: failed verification consumes the challenge", async () => {
+  const { server, baseUrl } = await createAuthTestServer();
+  try {
+    const kp = Keypair.random();
+    const ch = await j(baseUrl, "/auth/stellar/challenge", {
+      method: "POST", headers: XRW,
+      body: JSON.stringify({ publicKey: kp.publicKey() }),
+    });
+    const badSig = Keypair.random().sign(Buffer.from(ch.body.message, "utf8")).toString("base64");
+    const failed = await j(baseUrl, "/auth/stellar/verify", {
+      method: "POST", headers: XRW,
+      body: JSON.stringify({ publicKey: kp.publicKey(), challengeId: ch.body.challengeId, signature: badSig }),
+    });
+    assert.equal(failed.status, 401);
+
+    const retry = await j(baseUrl, "/auth/stellar/verify", {
+      method: "POST", headers: XRW,
+      body: JSON.stringify({
+        publicKey: kp.publicKey(),
+        challengeId: ch.body.challengeId,
+        signature: kp.sign(Buffer.from(ch.body.message, "utf8")).toString("base64"),
+      }),
+    });
+    assert.equal(retry.status, 401);
+    assert.equal(retry.body.error, "challenge_invalid");
+  } finally {
+    await server.close();
+  }
+});
+
 test("stellar: invalid public key → 400", async () => {
   const { server, baseUrl } = await createAuthTestServer();
   try {

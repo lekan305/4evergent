@@ -416,6 +416,16 @@ export function createAuthModule(opts: {
     string,
     { publicKey: string; message: string; expiresAt: number; used: boolean }
   >();
+  const transientSweep = setInterval(() => {
+    const now = Date.now();
+    for (const [state, pending] of pendingStates) {
+      if (pending.expiresAt <= now) pendingStates.delete(state);
+    }
+    for (const [challengeId, pending] of pendingChallenges) {
+      if (pending.expiresAt <= now || pending.used) pendingChallenges.delete(challengeId);
+    }
+  }, 60_000);
+  transientSweep.unref?.();
 
   function cookieSecure(req: any): boolean {
     if (cfg.cookieSecure === true) return true;
@@ -673,6 +683,7 @@ export function createAuthModule(opts: {
       const signature = typeof body?.signature === "string" ? body.signature : "";
       const pending = pendingChallenges.get(challengeId);
       if (!pending || pending.used || pending.expiresAt <= Date.now() || pending.publicKey !== publicKey) {
+        if (pending) pendingChallenges.delete(challengeId);
         sendJson(res, 401, { error: "challenge_invalid" });
         return true;
       }
@@ -688,6 +699,7 @@ export function createAuthModule(opts: {
         sigBuf = null;
       }
       if (!sigBuf) {
+        pendingChallenges.delete(challengeId);
         sendJson(res, 400, { error: "invalid_signature_encoding" });
         return true;
       }
@@ -716,6 +728,7 @@ export function createAuthModule(opts: {
         }
       }
       if (!valid) {
+        pendingChallenges.delete(challengeId);
         sendJson(res, 401, { error: "invalid_signature" });
         return true;
       }
@@ -871,6 +884,7 @@ export function createAuthModule(opts: {
     configStatus,
     sweepExpiredSessions: (cutoff: number, limit?: number) => sessions.deleteExpiredBefore(cutoff, limit),
     close: () => {
+      clearInterval(transientSweep);
       users.close();
       sessions.close();
     },
